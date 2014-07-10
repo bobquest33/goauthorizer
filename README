@@ -1,0 +1,11 @@
+#Go Authorizer
+- Is a simple way to deal with authentication and authorization layer.
+- Is compatible with the go stdlib's http package
+- Is not going to ask you to bend your model to fit its needs
+- Has nothing to do with oauth. Sorry. :)
+
+Write your own authentication function, write an authorization function (just a tiny something that validates that a user has access to a resource), and you're good to go!
+
+See the example app!
+
+Licensed MIT for all your awesome needs!
