@@ -3,6 +3,7 @@ package goauthorizer
 import (
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 	"strings"
 
@@ -36,7 +37,9 @@ var DefaultForbiddenMessage = map[string]string{"result": "false", "reason": "40
 
 //loginfn should be a function that accepts a username and password and returns true or false.
 //authorizedfn should be a function that checks if a given username has access to a given resource.
-//unauthorizedfn
+//unauthorizedfn.
+//Last parameter NEEDS to be 8, 16, or 32 bytes long. See securecookie documentation.
+//Note that IF the last parameter is SET TO NIL,  ENCRYPTION OF THE COOKIE VALUE IS DISABLED.
 func NewAuthorizerHandler(loginfn LoginFunc, authorizedfn func(string, string) bool, cookiename string, cookieHashKey, cookieBlockKey []byte) *AuthorizerHandler {
 	var s = securecookie.New(cookieHashKey, cookieBlockKey)
 	ah := &AuthorizerHandler{loginfn: loginfn, cookiename: cookiename, securecookie: s, authorizedfn: authorizedfn}
@@ -57,12 +60,16 @@ func NewAuthorizerHandler(loginfn LoginFunc, authorizedfn func(string, string) b
 //Generic login handler uses the specified login function to authenticate users.
 //Returns a Forbidden when it fails.
 func (lh *AuthorizerHandler) Login(w http.ResponseWriter, req *http.Request) {
-	req.ParseForm()
+	err := req.ParseForm()
+	if err != nil {
+		log.Println(err)
+	}
 	original_ip := getOriginalIp(req)
 	uname := req.FormValue(lh.UserNameField)
 
 	if lh.loginfn(uname, req.FormValue(lh.PassWordField)) {
 		//Encode IP, User Agent, and UserName in cookie.
+
 		cookie := lh.encodeLoginCookie(uname, original_ip, req.UserAgent())
 
 		http.SetCookie(w, cookie)
@@ -116,9 +123,10 @@ func (bh *blankHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 func (lh *AuthorizerHandler) AuthorizeFunc(allowhandler http.HandlerFunc, denyhandler http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		if cookie, err := req.Cookie(lh.cookiename); err == nil {
-			if uname, err := lh.GetUserName(cookie, req); err == nil {
+			if uname, err := lh.GetUserName(req); err == nil {
 				//User is logged in.
 				if lh.authorizedfn(uname, req.URL.String()) {
+
 					allowhandler(w, req)
 					return
 				} else {
@@ -137,16 +145,25 @@ func (lh *AuthorizerHandler) AuthorizeFunc(allowhandler http.HandlerFunc, denyha
 	}
 }
 
-func (lh *AuthorizerHandler) GetUserName(cookie *http.Cookie, req *http.Request) (string, error) {
-	value := make(map[string]string)
-	if err := lh.securecookie.Decode(lh.cookiename, cookie.Value, &value); err == nil {
-		//This is to check against cookie theft and/or forgery.
-		if value["ip"] == getOriginalIp(req) && value["ua"] == req.UserAgent() {
-			return value[lh.UserNameField], nil
+func (lh *AuthorizerHandler) GetUserName(req *http.Request) (string, error) {
+	if cookie, err := req.Cookie(lh.cookiename); err == nil {
+		value := make(map[string]string)
+		if err := lh.securecookie.Decode(lh.cookiename, cookie.Value, &value); err == nil {
+			//This is to check against cookie theft and/or forgery.
+			if value["ip"] == getOriginalIp(req) && value["ua"] == req.UserAgent() {
+				return value[lh.UserNameField], nil
+			} else {
+				return "", errors.New("Authorizer: Bad cookie.")
+			}
 		} else {
-			return "", errors.New("Authorizer: Bad cookie.")
+			return "", err
 		}
 	} else {
 		return "", err
 	}
+}
+
+func (lh *AuthorizerHandler) IsLoggedIn(req *http.Request) bool {
+	u, e := lh.GetUserName(req)
+	return u != "" && e == nil
 }
